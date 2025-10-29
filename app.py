@@ -1,59 +1,36 @@
-import dash
-from dash import dcc, html, Input, Output, State
-import plotly.graph_objs as go
-import numpy as np
-import requests
-import json
 
-app = dash.Dash(__name__)
-server = app.server
+import streamlit as st
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
 
-app.layout = html.Div([
-    html.H2("Predictive Maintenance — Live Telemetry"),
-    dcc.Interval(id="tick", interval=1000, n_intervals=0),
-    dcc.Graph(id="telemetry"),
-    html.Div(id="prob", style={"fontWeight":"bold"}),
-    dcc.Store(id="series", data=[]),
-], style={"maxWidth": "900px", "margin":"auto"})
+# Load data
+df = pd.read_csv('data/churn_data.csv')
+X = df.drop('Churn', axis=1)
+y = df['Churn']
 
-@app.callback(
-    Output("series", "data"),
-    Input("tick", "n_intervals"),
-    State("series", "data"),
-)
-def generate(n, series):
-    # synthetic streaming row
-    rng = np.random.default_rng()
-    row = [
-        float(70 + 5*np.sin(n/10) + rng.normal(0, 0.6)),
-        float(1 + 0.3*np.sin(n/8) + rng.normal(0, 0.05)),
-        float(10 + 2*np.sin(n/12) + rng.normal(0, 0.4)),
-        float(500 + 40*np.sin(n/15) + rng.normal(0, 5))
-    ]
-    series = (series or []) + [row]
-    return series[-200:]
+# Train model
+scaler = StandardScaler().fit(X)
+X_scaled = scaler.transform(X)
+model = LogisticRegression().fit(X_scaled, y)
 
-@app.callback(
-    Output("telemetry", "figure"),
-    Output("prob", "children"),
-    Input("series", "data"),
-)
-def plot(series):
-    arr = np.array(series) if series else np.zeros((1,4))
-    fig = go.Figure()
-    for i, name in enumerate(["temp","vib","curr","rpm"]):
-        fig.add_trace(go.Scatter(y=arr[:,i], name=name))
-    prob_txt = "Failure Probability: (start API at :8000 and call /predict)"
-    try:
-        if len(arr) >= 24:
-            resp = requests.post("http://localhost:8000/predict", json={"series": arr.tolist()}, timeout=0.5)
-            if resp.ok:
-                prob = resp.json()["failure_probability"]
-                prob_txt = f"Failure Probability: {prob:.3f}"
-    except Exception:
-        pass
-    fig.update_layout(legend_orientation="h", margin=dict(l=20,r=20,t=20,b=20))
-    return fig, prob_txt
+# App UI
+st.title('Customer Churn Prediction')
+st.sidebar.header('Input Customer Data')
 
-if __name__ == "__main__":
-    app.run_server(debug=True, port=8050)
+def user_input_features():
+    data = {}
+    for col in X.columns:
+        data[col] = st.sidebar.slider(col, float(X[col].min()), float(X[col].max()), float(X[col].median()))
+    return pd.DataFrame([data])
+
+input_df = user_input_features()
+input_scaled = scaler.transform(input_df)
+prediction = model.predict(input_scaled)
+prediction_proba = model.predict_proba(input_scaled)
+
+st.subheader('Prediction')
+st.write('Churn' if prediction[0] == 1 else 'No Churn')
+st.subheader('Prediction Probability')
+st.write(prediction_proba)
